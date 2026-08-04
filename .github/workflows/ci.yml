@@ -1,0 +1,114 @@
+# PromptSiege CI — Python/FastAPI/Playwright stack.
+#
+# This workflow does NOT consume any untrusted GitHub event inputs
+# (no github.event.issue.*, no github.event.pull_request.title, no github.head_ref).
+# Only safe references: env.* constants and secrets.GITHUB_TOKEN.
+#
+# Gates that block merge to main:
+#   1. lint (ruff)
+#   2. install-matrix (installer + pytest on ubuntu/macos/windows, --skip-browser)
+#   3. install-full (ubuntu-only, full installer incl. Playwright browser download)
+#   4. bandit (SAST, blocking on high severity)
+#   5. secret-scan (gitleaks)
+#
+# Python matrix is 3.12 only: requirements.txt pins exact versions and
+# pyproject.toml only asserts requires-python >=3.12 -- 3.13 compat isn't
+# verified, so we don't claim it here.
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install ruff
+      - run: ruff check .
+
+  # Proves `python install.py --yes --skip-browser` (the real installer) works
+  # standalone on all three OSes, then runs the suite through the venv it built.
+  install-matrix:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.12']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install (unix)
+        if: runner.os != 'Windows'
+        run: python install.py --yes --skip-browser
+      - name: Install (windows, via install.ps1 shim)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\install.ps1 --yes --skip-browser
+      - name: Run tests via installer-built venv
+        run: |
+          if [ -x venv/bin/python ]; then
+            VENV_PY=venv/bin/python
+          else
+            VENV_PY=venv/Scripts/python.exe
+          fi
+          "$VENV_PY" -m pytest tests/ -q
+
+  # Ubuntu-only: covers the full install path including the Playwright browser
+  # download, so that path is verified once without paying for it on all 3 OSes.
+  install-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: python install.py --yes
+      - run: venv/bin/python -m pytest tests/ -q
+
+  bandit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install bandit
+      - run: bandit -r ui/ scripts/ run.py -ll
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# App data / working-tree artifacts
+results/
+.cache/
+.corpus_cache/
+.env
+*.bak
+prompts.json.bak-*
+
+# Claude Code / agent tooling internals — must not appear in a public repo
+.claude/
+.planning/
+.remember/
+.browser_profile/
+graphify-out/
+docs/superpowers/
+CLAUDE.md
+
+# Team-kit scaffolding leftovers (not part of the PromptSiege app)
+/templates/
+/prompts/
+
+# Misc
+.claude/settings.local.json
