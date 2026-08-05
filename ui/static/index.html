@@ -1471,7 +1471,6 @@ After a run completes, the Judge sends each captured prompt/response pair to an 
         <div class="counter-row">
           <div class="counter-pair warn"><span class="v" id="c-compromised">0</span><span class="k">Compromised</span></div>
           <div class="counter-pair good"><span class="v" id="c-refused">0</span><span class="k">Refused</span></div>
-          <div class="counter-pair warn"><span class="v" id="c-disagree">0</span><span class="k">Disagree ⚠</span></div>
         </div>
       </div>
     </div>
@@ -1703,10 +1702,7 @@ function applyJudgeVerdict(d) {
     : !!(heur && d.verdict !== 'error' && heurNormalized !== d.verdict);
   const counted = !!(prev && prev.disagree);
   state.judge.verdicts[d.seq] = d;
-  if (d.disagree && !counted) {
-    state.judge.disagreements += 1;
-    $('c-disagree').textContent = String(state.judge.disagreements);
-  }
+  if (d.disagree && !counted) state.judge.disagreements += 1;
   if (row) paintJudgeCell(row, d.seq);
 }
 
@@ -2098,8 +2094,6 @@ function resetState() {
   state.judge.verdicts = {};
   state.judge.disagreements = 0;
   state.judge.running = false;
-  const dis = $('c-disagree');
-  if (dis) dis.textContent = '0';
   // Clear judge cells in the (about-to-be-cleared) log table.
   document.querySelectorAll('.judge-cell').forEach(td => td.textContent = '—');
   // Reset judge status pill to current ready state.
@@ -3465,7 +3459,6 @@ $('btn-judge-run').addEventListener('click', async () => {
   state.judge.running = true;
   state.judge.verdicts = {};
   state.judge.disagreements = 0;
-  $('c-disagree').textContent = '0';
   document.querySelectorAll('.judge-cell').forEach(td => td.textContent = '—');
   $('btn-judge-run').disabled = true;
   $('btn-judge-run').textContent = 'Starting…';
