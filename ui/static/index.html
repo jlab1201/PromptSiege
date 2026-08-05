@@ -655,6 +655,12 @@
   .judge-block .row { display: flex; gap: var(--sp-2); align-items: center; }
   .judge-block input[type="password"] { flex: 1; font-family: var(--mono); font-size: 11px; }
   .judge-block select { font-size: 11px; }
+  .adv-toggle { display: flex; align-items: center; gap: 6px;
+                background: none; border: 0; padding: 0; cursor: pointer; }
+  .adv-toggle .section-h { margin-bottom: 0; }
+  .adv-chevron { color: var(--muted); font-size: 10px; }
+  #advanced-fields { margin-top: 8px; }
+  #advanced-fields[hidden] { display: none; }
   /* Judge title row: label + help icon on the left, edit pencil pinned top-right */
   .judge-title { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
   .judge-title > span { white-space: nowrap; }
@@ -1122,7 +1128,12 @@ Skip prompts longer than this many characters. Set it when you know the target's
     </div>
 
     <div class="section">
-      <div class="section-h">Request identity</div>
+      <button class="adv-toggle" id="btn-advanced" type="button" aria-expanded="false" aria-controls="advanced-fields">
+        <span class="section-h">Advanced options</span>
+        <span class="adv-chevron" id="adv-chevron" aria-hidden="true">▸</span>
+      </button>
+      <div id="advanced-fields" hidden>
+      <div class="section-h" style="margin-top:8px;">Request identity</div>
       <div class="field">
         <label for="f-identity">Identity
           <span class="help-icon" tabindex="0" data-help="
@@ -1179,9 +1190,8 @@ The page the chat widget is embedded on — used by the browser runner.
         </label>
         <input id="f-hostpage" type="text" placeholder="https://example.com/page-with-the-widget" spellcheck="false">
       </div>
-    </div>
 
-    <div class="judge-block">
+      <div class="judge-block">
         <div class="judge-title">
           <span>Judge (LLM scoring)
             <span class="help-icon" tabindex="0" data-help="
@@ -1215,10 +1225,12 @@ After a run completes, the Judge sends each captured prompt/response pair to an 
             </div>
           </div>
         </div>
-        <div class="row">
-          <button class="btn btn-primary" id="btn-judge-run" type="button" disabled>Judge run</button>
-        </div>
       </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn btn-primary" id="btn-judge-run" type="button" disabled>Judge run</button>
+      </div>
+      </div>
+    </div>
   </aside>
 
   <main class="main">
@@ -1454,7 +1466,7 @@ After a run completes, the Judge sends each captured prompt/response pair to an 
     </div>
 
     <div class="section">
-      <div class="section-h">Compromised</div>
+      <div class="section-h">Result</div>
       <div class="counter-block">
         <div class="counter-row">
           <div class="counter-pair warn"><span class="v" id="c-compromised">0</span><span class="k">Compromised</span></div>
@@ -1661,27 +1673,63 @@ function pillForVerdict(v) {
   return el('span', { cls: 'pill ' + cls }, glyph + ' ' + v);
 }
 
-function applyJudgeVerdict(d) {
-  state.judge.verdicts[d.seq] = d;
-  const row = document.querySelector(`tr[data-seq="${d.seq}"]`);
-  if (!row) return;
+// Draw only. Every rebuild of a log row recreates the judge <td> as '—', so this
+// has to be replayable — and replaying must never recompute `disagree`: a judge
+// pass promotes its verdict into injection_outcome, so by the second paint the
+// heuristic it disagreed with is the judge's own call and every ⚠ would vanish.
+function paintJudgeCell(row, seq) {
+  const d = state.judge.verdicts[seq];
+  if (!d) return;
   const cell = row.querySelector('.judge-cell');
-  const heur = row.dataset.heuristic;
-  // Disagreement: heuristic verdict differs from judge verdict.
-  // Map heuristic 'blocked' to the same bucket as 'refused' (model never got hit / wouldn't comply).
-  const heurNormalized = heur === 'blocked' ? 'refused' : heur;
-  const disagree = (heur && d.verdict !== 'error' && heurNormalized !== d.verdict);
+  if (!cell) return;
   while (cell.firstChild) cell.removeChild(cell.firstChild);
   cell.appendChild(pillForVerdict(d.verdict));
-  if (disagree) {
-    const mark = el('span', { cls: 'disagree-mark', attrs: { title: 'disagrees with heuristic' } }, '⚠');
-    cell.appendChild(mark);
+  if (d.disagree) {
+    cell.appendChild(el('span', { cls: 'disagree-mark', attrs: { title: 'disagrees with heuristic' } }, '⚠'));
   }
   cell.title = d.rationale || '';
-  if (disagree) {
+}
+
+function applyJudgeVerdict(d) {
+  const row = document.querySelector(`tr[data-seq="${d.seq}"]`);
+  // Disagreement: heuristic verdict differs from judge verdict. Decided once, on
+  // first sight, then stored on the verdict — paintJudgeCell only reads it.
+  // Map heuristic 'blocked' to the same bucket as 'refused' (model never got hit / wouldn't comply).
+  const heur = row ? row.dataset.heuristic : '';
+  const heurNormalized = heur === 'blocked' ? 'refused' : heur;
+  const prev = state.judge.verdicts[d.seq];
+  d.disagree = prev && 'disagree' in prev
+    ? prev.disagree
+    : !!(heur && d.verdict !== 'error' && heurNormalized !== d.verdict);
+  const counted = !!(prev && prev.disagree);
+  state.judge.verdicts[d.seq] = d;
+  if (d.disagree && !counted) {
     state.judge.disagreements += 1;
     $('c-disagree').textContent = String(state.judge.disagreements);
   }
+  if (row) paintJudgeCell(row, d.seq);
+}
+
+// Judging rewrites injection_outcome on disk (judge.py promote_verdict) and
+// re-tallies the meta counters, but nothing client-side knows that — so the
+// Result counters, row borders and the outcome filter would keep showing the
+// pre-judge heuristic until a full page reload. Re-read the run and patch.
+async function refreshAfterJudge(runId) {
+  try {
+    const r = await fetch('/api/runs/' + encodeURIComponent(runId));
+    if (!r.ok) return;
+    const { meta, records } = await r.json();
+    for (const rec of (records || [])) {
+      const t = state.turns.get(rec.seq);
+      if (!t) continue;
+      t.injection_outcome = rec.injection_outcome;
+      updateLogRow(rec.seq);
+    }
+    if (meta && meta.counters) {
+      state.counters = Object.assign({}, state.counters, meta.counters);
+      renderCounters();
+    }
+  } catch (_) { /* stale numbers beat a wedged Judge button */ }
 }
 
 function openJudgeStream(runId) {
@@ -1699,6 +1747,7 @@ function openJudgeStream(runId) {
     // they were never sent to the LLM. Older cached runs have no such field.
     const skipped = d.skipped_deterministic ?? 0;
     const skippedNote = skipped ? `, ${skipped} already certain` : '';
+    refreshAfterJudge(runId);
     toast(`Done — ${d.total} graded${skippedNote}, ${state.judge.disagreements} disagree`, 'ok');
     state.judge.running = false;
     $('btn-judge-run').disabled = false;
@@ -1838,9 +1887,6 @@ function renderJudgeModels() {
 // cheap model, the full corpus about $2.17, and the full corpus on a frontier
 // model about $10.83. Costs come straight off the catalog's per-million rates,
 // so this is a multiply — no new endpoint.
-//
-// The message count matters at least as much: chat-widget vendors bill the
-// owner per conversation, and that bill is not ours to be quiet about.
 const EST_INPUT_TOKENS = 900;    // judge system prompt + criterion + prompt + response
 const EST_OUTPUT_TOKENS = 60;    // the verdict JSON
 
@@ -1850,12 +1896,7 @@ function renderRunEstimate() {
   const n = parseInt($('f-limit').value, 10) || 0;
   if (n <= 0) { clear(box); box.classList.remove('warn'); return; }
 
-  const parts = [
-    el('div', {},
-      el('strong', { text: String(n) }),
-      ' message' + (n === 1 ? '' : 's') + ' sent to your bot' +
-      ' — most chat widget vendors bill per conversation, so this may show up on your bill.'),
-  ];
+  const parts = [];
 
   const modelId = $('judge-model') ? $('judge-model').value : '';
   const m = __judgeCatalog.find(x => x.model_id === modelId);
@@ -2566,6 +2607,7 @@ function updateLogRow(seq) {
   tr.appendChild(el('td', { cls: 'col-response', title: respPretty, text: truncate(oneline(respPretty), 120) }));
   tr.appendChild(el('td', { cls: 'col-read', text: t.read || '' }));
   tr.appendChild(el('td', { cls: 'judge-cell', attrs: { 'data-seq': String(t.seq) }, text: '—' }));
+  paintJudgeCell(tr, t.seq);
   applyFiltersToRow(tr, t);
   applySort();
   updateBadges();
@@ -3355,6 +3397,13 @@ $('btn-pause').addEventListener('click', () => {
   else                   pauseRun();
 });
 $('btn-stop').addEventListener('click', stopRun);
+
+$('btn-advanced').addEventListener('click', () => {
+  const open = $('advanced-fields').hidden;
+  $('advanced-fields').hidden = !open;
+  $('btn-advanced').setAttribute('aria-expanded', String(open));
+  $('adv-chevron').textContent = open ? '▾' : '▸';
+});
 
 // ---- judge button listeners ----
 function setJudgeEditOpen(open) {
