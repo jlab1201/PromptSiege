@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==9.0.3", "ruff"]
+dev = ["pytest==9.1.1", "ruff"]
 
 [build-system]
 requires = ["setuptools>=68"]
