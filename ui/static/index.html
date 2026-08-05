@@ -2016,11 +2016,14 @@ async function startRun() {
     target_url = discovery.best.url;
   }
 
+  // isFinite, not `|| 3`: pace 0 is a legal, documented value ("fastest") and
+  // `0 || 3` would silently turn it into 3. Same guard resumeRun() uses.
+  const paceVal = parseFloat($('f-pacing').value);
   const body = {
     target_url,
     categories: selectedCategories(),
     limit: parseInt($('f-limit').value, 10) || 20,
-    pacing_s: parseFloat($('f-pacing').value) || 3,
+    pacing_s: isFinite(paceVal) ? paceVal : 3,
     max_prompt_chars: parseInt($('f-maxchars').value, 10) || 0,
     shuffle: $('f-shuffle').checked,
     identity: $('f-identity').value,
