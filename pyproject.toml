@@ -12,7 +12,7 @@ dependencies = [
     "playwright==1.62.0",
     "httpx==0.28.1",
     "requests==2.34.2",
-    "openai==2.52.0",
+    "openai==3.29.0",
 ]
 
 [project.optional-dependencies]
